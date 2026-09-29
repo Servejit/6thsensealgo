@@ -16,6 +16,9 @@ Automated algorithmic-trading application under development.
 - Emergency stop
 - Broker-neutral paper order adapter
 - Persistent SQLite paper positions and order journal
+- Explicit order state machine: CREATED → SUBMITTED → OPEN/PARTIALLY_FILLED → FILLED/CANCELLED/REJECTED
+- Broker-neutral reconciliation engine with discrepancy blocking
+- Reconciliation audit history and manual dashboard check
 - Disabled live-broker adapter (no real orders)
 
 ## Run
@@ -35,6 +38,7 @@ Do not treat yfinance polling as production-grade execution data. A production s
 
 1. Validate indicator conventions against the user's chart platform.
 2. Improve event-driven scheduler/websocket market feed.
-3. Add persistent daily risk/session state and restart reconciliation.
-4. Add broker-specific authenticated adapter.
-5. Add live execution only after extensive paper/forward testing and required broker/exchange safeguards.
+3. Add broker-specific authenticated adapter implementing exchange/broker-supported order types.
+4. Connect authenticated broker snapshots to the reconciliation engine.
+5. Add production event-driven feed and operational monitoring.
+6. Add live execution only after extensive paper/forward testing and required broker/exchange safeguards.
