@@ -38,6 +38,7 @@ class TradesmartWebSocket:
         self._stop = threading.Event()
         self._subscriptions = []
         self._connected = False
+        self._last_message_at = None
 
     @property
     def connected(self):
@@ -61,6 +62,7 @@ class TradesmartWebSocket:
 
     def _on_open(self, ws):
         self._connected = True
+        self._last_message_at = time.time()
         ws.send(json.dumps({
             "t": "a",
             "uid": self.client_id,
@@ -73,6 +75,7 @@ class TradesmartWebSocket:
             self.on_open()
 
     def _on_message(self, ws, raw):
+        self._last_message_at = time.time()
         try:
             data = json.loads(raw)
         except Exception as exc:
@@ -102,8 +105,8 @@ class TradesmartWebSocket:
                     on_close=self._on_close,
                 )
                 self._ws.run_forever(
-                    ping_interval=20,
-                    ping_timeout=10,
+                    ping_interval=None,
+                    ping_timeout=None,
                 )
             except Exception as exc:
                 if self.on_error:
@@ -123,6 +126,10 @@ class TradesmartWebSocket:
             self._thread.start()
         else:
             self._run()
+
+    def heartbeat(self):
+        if self._ws and self._connected:
+            self._ws.send(json.dumps({"t": "h"}))
 
     def stop(self):
         self._stop.set()
