@@ -326,7 +326,8 @@ with tab3:
             max_trades,
         )
         st.session_state["paper"] = PaperTrader(
-            symbol, capital, risk, sl_pct, target_pct
+            symbol, capital, risk, sl_pct, target_pct,
+            feed=st.session_state["paper_feed"],
         )
         st.session_state["paper_history"] = []
         st.session_state["paper_config"] = config_key
@@ -420,6 +421,14 @@ with tab3:
         d.metric("Score", f"{score_signal(row)[0]:.0f}/100")
 
         st.dataframe(pd.DataFrame([snap]), use_container_width=True)
+
+        feed = st.session_state.get("paper_feed")
+        if feed is not None:
+            health = feed.health()
+            if health.stale:
+                st.error(f"⚠️ MARKET FEED STALE • {health.message} • age: {health.age_seconds:.0f}s")
+            else:
+                st.success(f"🟢 MARKET FEED HEALTHY • latest completed bar: {health.last_bar_timestamp}")
 
         if st.session_state["paper_history"]:
             st.subheader("Paper Order Journal")
