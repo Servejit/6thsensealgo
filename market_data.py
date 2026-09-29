@@ -1,6 +1,7 @@
 import pandas as pd
 import yfinance as yf
 from strategy_engine import add_indicators, direction_signal
+from market_feed import MarketDataFeed, dataframe_to_bars
 
 def fetch_5m(symbol, period="5d"):
     df = yf.Ticker(symbol).history(period=period, interval="5m", auto_adjust=False)
@@ -24,3 +25,13 @@ def latest_confirmation(df5, df15):
     ts = df5.iloc[-1]["timestamp"]
     c = df15[df15["timestamp"] <= ts]
     return "NOT AVAILABLE" if c.empty else direction_signal(c.iloc[-1])
+
+def fetch_5m_feed(symbol, period="5d", callback=None):
+    """Fetch completed 5m history and publish it through the broker-neutral feed."""
+    df = fetch_5m(symbol, period)
+    feed = MarketDataFeed(symbol)
+    if callback is not None:
+        feed.subscribe(callback)
+    for bar in dataframe_to_bars(df, symbol):
+        feed.publish(bar)
+    return feed, df
