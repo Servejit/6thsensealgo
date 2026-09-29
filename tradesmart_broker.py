@@ -136,6 +136,44 @@ class TradesmartBroker(BrokerAdapter):
         data = self._post("SearchScrip", payload)
         return data.get("values", []) if isinstance(data, dict) else []
 
+    def historical_candles(self, exchange, token, interval=5, lookback_days=5):
+        """Fetch TradeSmart TPSeries candles for live strategy warm-up."""
+        import time as _time
+        end_ts = int(_time.time())
+        start_ts = end_ts - int(float(lookback_days) * 86400)
+        payload = {
+            "uid": self.client_id,
+            "exch": str(exchange),
+            "token": str(token),
+            "st": str(start_ts),
+            "et": str(end_ts),
+            "intrv": str(int(interval)),
+        }
+        data = self._post("TPSeries", payload)
+        rows = data.get("values", []) if isinstance(data, dict) else []
+        if not rows and isinstance(data, list):
+            rows = data
+        records = []
+        for row in rows:
+            records.append({
+                "timestamp": row.get("time") or row.get("timestamp"),
+                "open": row.get("into"),
+                "high": row.get("inth"),
+                "low": row.get("intl"),
+                "close": row.get("intc"),
+                "volume": row.get("intv", row.get("v", 0)),
+            })
+        frame = __import__("pandas").DataFrame(records)
+        if frame.empty:
+            return frame
+        frame["timestamp"] = __import__("pandas").to_datetime(
+            frame["timestamp"], errors="coerce", utc=True, dayfirst=True
+        )
+        for column in ["open", "high", "low", "close", "volume"]:
+            frame[column] = __import__("pandas").to_numeric(frame[column], errors="coerce")
+        frame = frame.dropna(subset=["timestamp", "open", "high", "low", "close"])
+        return frame.sort_values("timestamp").drop_duplicates("timestamp").reset_index(drop=True)
+
     def get_positions(self):
         return self._post("PositionBook", {"uid": self.client_id})
 
