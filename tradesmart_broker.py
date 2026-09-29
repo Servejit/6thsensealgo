@@ -1,5 +1,7 @@
 import os
 import time
+import json
+import hashlib
 from datetime import datetime
 from typing import Optional
 
@@ -68,6 +70,27 @@ class TradesmartBroker(BrokerAdapter):
         if data.get("stat") != "Ok":
             raise RuntimeError(data.get("emsg", "TradeSmart API request failed."))
         return data
+
+    def generate_access_token(self, app_key, secret_key, authorization_code):
+        checksum = hashlib.sha256(
+            f"{app_key}{secret_key}{authorization_code}".encode()
+        ).hexdigest()
+        response = self.session.post(
+            f"{self.base_url}/GenAcsTok",
+            data="jData=" + json.dumps(
+                {"code": authorization_code, "checksum": checksum},
+                separators=(",", ":"),
+            ),
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if data.get("stat") != "Ok":
+            raise RuntimeError(data.get("emsg", "TradeSmart token exchange failed."))
+        token = data.get("access_token")
+        if not token:
+            raise RuntimeError("TradeSmart token exchange returned no access_token.")
+        return token
 
     def user_details(self):
         return self._post("UserDetails", {"uid": self.client_id})
