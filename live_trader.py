@@ -18,6 +18,7 @@ from state_store import (
     save_broker_snapshot,
     save_reconciliation,
     save_position,
+    update_order_status,
 )
 from strategy_engine import add_indicators, direction_signal, score_signal
 from tradesmart_broker import TradesmartBroker
@@ -259,11 +260,17 @@ class LiveTrader:
             reason=reason,
         )
         order = self.router.submit(
-        self._pending_orders[order.order_id] = {"kind": "ENTRY", "side": side, "qty": qty, "price": price, "reason": reason}
             request,
             reconciliation=result,
             risk_ok=True,
         )
+        self._pending_orders[order.order_id] = {
+            "kind": "ENTRY",
+            "side": side,
+            "qty": qty,
+            "price": price,
+            "reason": reason,
+        }
         self.history.append({
             "time": datetime.now(timezone.utc).isoformat(),
             "action": "ORDER SUBMITTED",
@@ -289,11 +296,17 @@ class LiveTrader:
             reason=reason,
         )
         order = self.router.submit(
-        self._pending_orders[order.order_id] = {"kind": "EXIT", "side": side, "qty": qty, "price": price, "reason": reason}
             request,
             reconciliation=result,
             risk_ok=True,
         )
+        self._pending_orders[order.order_id] = {
+            "kind": "EXIT",
+            "side": side,
+            "qty": qty,
+            "price": price,
+            "reason": reason,
+        }
         self.history.append({
             "time": datetime.now(timezone.utc).isoformat(),
             "action": "EXIT SUBMITTED",
@@ -316,11 +329,15 @@ class LiveTrader:
             if pending is None:
                 return
             if status in {"REJECTED", "CANCELED", "CANCELLED"}:
+                update_order_status(order_id, "REJECTED" if status == "REJECTED" else "CANCELLED", data.get("rejreason"))
                 self.last_action = f"ORDER {status}: {order_id}"
                 self._pending_orders.pop(order_id, None)
                 return
             if status != "COMPLETE":
+                if status in {"OPEN", "PENDING", "NEW"}:
+                    update_order_status(order_id, "OPEN" if status == "OPEN" else "SUBMITTED")
                 return
+            update_order_status(order_id, "FILLED")
             avg = float(data.get("avgprc", pending["price"]) or pending["price"])
             if pending["kind"] == "ENTRY":
                 entry = avg
