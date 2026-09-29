@@ -4,6 +4,7 @@ from typing import Optional
 from execution_guard import ExecutionGuard
 from order_engine import PaperBroker, Order
 from reconciliation import ReconciliationResult
+from tradesmart_broker import TradesmartBroker
 
 
 @dataclass
@@ -65,8 +66,14 @@ class ExecutionRouter:
         if self.live_broker is None:
             raise RuntimeError("LIVE execution is blocked: no live broker adapter is installed.")
 
-        # A future broker adapter must be deliberately implemented here.
-        raise RuntimeError(
-            "LIVE execution is not implemented. The safety architecture is ready, "
-            "but no real-money order can be submitted."
+        broker = self.live_broker
+        if not isinstance(broker, TradesmartBroker):
+            raise RuntimeError("LIVE execution requires a configured TradeSmart broker adapter.")
+
+        return broker.submit(
+            request.symbol,
+            request.side.upper(),
+            request.quantity,
+            request.price,
+            request.reason,
         )
