@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Optional
+import os
 
 
 @dataclass
@@ -12,11 +13,29 @@ class ExecutionConfig:
     kill_switch_enabled: bool = True
 
 
+def _env_bool(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def live_config_from_env():
+    return ExecutionConfig(
+        live_enabled=_env_bool("TRADESMART_LIVE_ENABLED", False),
+        broker_connected=_env_bool("TRADESMART_BROKER_CONNECTED", False),
+        static_ip_configured=_env_bool("TRADESMART_STATIC_IP_CONFIGURED", False),
+        api_2fa_configured=_env_bool("TRADESMART_API_2FA_CONFIGURED", False),
+        reconciliation_enabled=_env_bool("TRADESMART_RECONCILIATION_ENABLED", False),
+        kill_switch_enabled=_env_bool("TRADESMART_KILL_SWITCH_ENABLED", True),
+    )
+
+
 class ExecutionGuard:
     """Fail-closed safety gate for any future live execution."""
 
     def __init__(self, config=None):
-        self.config = config or ExecutionConfig()
+        self.config = config or live_config_from_env()
 
     def live_ready(self):
         c = self.config
