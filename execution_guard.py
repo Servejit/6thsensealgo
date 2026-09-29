@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from typing import Optional
 import os
-import os
 
 
 @dataclass
@@ -32,22 +31,6 @@ def live_config_from_env():
     )
 
 
-def _env_bool(name, default=False):
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def live_config_from_env():
-    return ExecutionConfig(
-        live_enabled=_env_bool("TRADESMART_LIVE_ENABLED", False),
-        broker_connected=_env_bool("TRADESMART_BROKER_CONNECTED", False),
-        static_ip_configured=_env_bool("TRADESMART_STATIC_IP_CONFIGURED", False),
-        api_2fa_configured=_env_bool("TRADESMART_API_2FA_CONFIGURED", False),
-        reconciliation_enabled=_env_bool("TRADESMART_RECONCILIATION_ENABLED", False),
-        kill_switch_enabled=_env_bool("TRADESMART_KILL_SWITCH_ENABLED", True),
-    )
 
 
 class ExecutionGuard:
