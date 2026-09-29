@@ -3,7 +3,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from state_store import save_order, update_order_status
+from state_store import save_order, update_order_status, load_position, load_orders
 
 
 class OrderState(str, Enum):
@@ -50,6 +50,16 @@ class Order:
         return self
 
 
+@dataclass(frozen=True)
+class BrokerOrderRecord:
+    order_id: str
+    symbol: str
+    side: str
+    quantity: int
+    status: str
+    price: Optional[float] = None
+
+
 class PaperBroker:
     """Persistent-journal paper adapter. It never sends real orders."""
     def __init__(self):
@@ -78,7 +88,29 @@ class PaperBroker:
         return self.orders.get(order_id)
 
     def positions(self):
-        return []
+        position = load_position(self.orders[next(iter(self.orders))].symbol) if self.orders else None
+        if not position:
+            return []
+        return [{
+            "symbol": self.orders[next(iter(self.orders))].symbol,
+            "side": position["side"],
+            "quantity": position["qty"],
+            "entry": position["entry"],
+        }]
+
+    def broker_orders(self, symbol=None):
+        rows = load_orders(symbol, 200)
+        return [
+            BrokerOrderRecord(
+                order_id=str(row["order_id"]),
+                symbol=str(row["symbol"]),
+                side=str(row["side"]),
+                quantity=int(row["quantity"]),
+                status=str(row["status"]),
+                price=float(row["price"]) if row.get("price") is not None else None,
+            )
+            for row in rows
+        ]
 
 
 def order_state_is_terminal(status):
