@@ -1,6 +1,20 @@
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from typing import Optional
+
+from state_store import save_order, update_order_status
+
+
+class OrderState(str, Enum):
+    CREATED = "CREATED"
+    SUBMITTED = "SUBMITTED"
+    OPEN = "OPEN"
+    PARTIALLY_FILLED = "PARTIALLY_FILLED"
+    FILLED = "FILLED"
+    CANCELLED = "CANCELLED"
+    REJECTED = "REJECTED"
+
 
 @dataclass
 class Order:
@@ -15,22 +29,49 @@ class Order:
     filled_at: Optional[str] = None
     reason: str = ""
 
+    def transition(self, new_status):
+        current = OrderState(self.status)
+        target = OrderState(new_status)
+        allowed = {
+            OrderState.CREATED: {OrderState.SUBMITTED, OrderState.REJECTED},
+            OrderState.SUBMITTED: {OrderState.OPEN, OrderState.PARTIALLY_FILLED, OrderState.FILLED, OrderState.CANCELLED, OrderState.REJECTED},
+            OrderState.OPEN: {OrderState.PARTIALLY_FILLED, OrderState.FILLED, OrderState.CANCELLED, OrderState.REJECTED},
+            OrderState.PARTIALLY_FILLED: {OrderState.PARTIALLY_FILLED, OrderState.FILLED, OrderState.CANCELLED},
+            OrderState.FILLED: set(),
+            OrderState.CANCELLED: set(),
+            OrderState.REJECTED: set(),
+        }
+        if target not in allowed[current]:
+            raise ValueError(f"Invalid order transition: {current.value} -> {target.value}")
+        self.status = target.value
+        if target == OrderState.FILLED:
+            self.filled_at = datetime.utcnow().isoformat()
+        update_order_status(self.order_id, self.status, self.reason, self.filled_at)
+        return self
+
+
 class PaperBroker:
-    """Broker-neutral paper adapter. It never sends real orders."""
+    """Persistent-journal paper adapter. It never sends real orders."""
     def __init__(self):
         self.orders = {}
 
     def submit(self, symbol, side, quantity, price, reason=""):
+        now = datetime.utcnow().isoformat()
         order_id = f"PAPER-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
         order = Order(order_id, symbol, side, int(quantity), "MARKET", float(price),
-                      "FILLED", datetime.utcnow().isoformat(), datetime.utcnow().isoformat(), reason)
+                      OrderState.CREATED.value, now, reason=reason)
+        save_order(order)
         self.orders[order_id] = order
+        order.transition(OrderState.SUBMITTED.value)
+        order.transition(OrderState.FILLED.value)
         return order
 
     def cancel(self, order_id):
-        if order_id in self.orders and self.orders[order_id].status == "OPEN":
-            self.orders[order_id].status = "CANCELLED"
-            return self.orders[order_id]
+        order = self.orders.get(order_id)
+        if order is None:
+            return None
+        if order.status in {OrderState.OPEN.value, OrderState.SUBMITTED.value}:
+            return order.transition(OrderState.CANCELLED.value)
         return None
 
     def get_order(self, order_id):
@@ -38,3 +79,7 @@ class PaperBroker:
 
     def positions(self):
         return []
+
+
+def order_state_is_terminal(status):
+    return status in {OrderState.FILLED.value, OrderState.CANCELLED.value, OrderState.REJECTED.value}
