@@ -9,6 +9,7 @@ Automated algorithmic-trading application under development.
 - Independent 15m confirmation
 - CSV backtesting
 - Live market-data polling for paper trading
+- Broker-neutral market-data event/feed interface
 - BUY/SELL signal-start protection
 - Automatic paper stop-loss and target
 - Risk-based position sizing
@@ -37,8 +38,9 @@ Do not treat yfinance polling as production-grade execution data. A production s
 ## Roadmap
 
 1. Validate indicator conventions against the user's chart platform.
-2. Improve event-driven scheduler/websocket market feed.
-3. Add broker-specific authenticated adapter implementing exchange/broker-supported order types.
-4. Connect authenticated broker snapshots to the reconciliation engine.
-5. Add production event-driven feed and operational monitoring.
+2. Connect a broker/exchange websocket to the broker-neutral market-data feed.
+3. Add event-driven scheduler, stale-feed detection, and reconnect handling.
+4. Add broker-specific authenticated adapter implementing exchange/broker-supported order types.
+5. Connect authenticated broker snapshots to the reconciliation engine.
+6. Add production operational monitoring.
 6. Add live execution only after extensive paper/forward testing and required broker/exchange safeguards.
