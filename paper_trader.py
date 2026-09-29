@@ -17,12 +17,14 @@ from risk_engine import RiskEngine
 class PaperTrader:
     """Persistent paper trader. It never sends real broker orders."""
 
-    def __init__(self, symbol, capital, risk_engine, sl_pct, target_pct):
+    def __init__(self, symbol, capital, risk_engine, sl_pct, target_pct, feed=None):
         init_db()
         self.symbol = symbol
         self.sl_pct = float(sl_pct)
         self.target_pct = float(target_pct)
         self.broker = PaperBroker()
+        self.feed = feed
+        self.feed_enabled = feed is not None
 
         session = load_session(symbol)
         today = date.today().isoformat()
@@ -227,7 +229,25 @@ class PaperTrader:
         starts = signal in ("BUY", "SELL") and signal != self.previous_signal
         self.previous_signal = signal
 
+        feed_ok = self.feed.can_trade() if self.feed_enabled else True
         if self.position is None and starts:
+            if not feed_ok:
+                self.last_bar_timestamp = bar_timestamp
+                self._persist_session()
+                return {
+                    "Time": datetime.now().isoformat(timespec="seconds"),
+                    "Action": "BLOCKED",
+                    "Side": signal,
+                    "Price": price,
+                    "Quantity": 0,
+                    "P&L": 0.0,
+                    "Reason": "Market feed is stale or disconnected.",
+                    "Signal": signal,
+                    "15m": confirmation,
+                    "Score": score,
+                    "Status": "PAPER",
+                }
+
             allowed, reason = self.risk.can_open()
             if not allowed:
                 self.last_bar_timestamp = bar_timestamp
