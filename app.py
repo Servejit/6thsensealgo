@@ -325,6 +325,7 @@ with tab3:
             max_daily_loss,
             max_trades,
         )
+        st.session_state["event_engine"] = EventEngine()
         st.session_state["paper"] = PaperTrader(
             symbol, capital, risk, sl_pct, target_pct,
             feed=st.session_state["paper_feed"],
@@ -367,13 +368,27 @@ with tab3:
             )
 
             trader = st.session_state["paper"]
+            event_engine = st.session_state["event_engine"]
             new_events = []
-            # Process chronological bars. The trader's persisted last-bar
-            # timestamp makes this safe across reruns and restarts.
             for _, row in data5.iloc[-5:].iterrows():
+                event_engine.emit(
+                    EventType.BAR_CLOSED,
+                    row["timestamp"],
+                    symbol,
+                    {"row": row.to_dict()},
+                )
                 event = trader.process_bar(row, confirmation)
                 if event:
+                    event_type = EventType.RISK_BLOCK if event.get("Action") == "BLOCKED" else EventType.ORDER_EVENT
+                    event_engine.emit(event_type, row["timestamp"], symbol, event)
                     new_events.append(event)
+                else:
+                    event_engine.emit(
+                        EventType.SIGNAL,
+                        row["timestamp"],
+                        symbol,
+                        {"signal": direction_signal(row), "score": score_signal(row)[0]},
+                    )
 
             st.session_state["paper_history"].extend(new_events)
             st.session_state["paper_last"] = data5.iloc[-1]
@@ -429,6 +444,10 @@ with tab3:
                 st.error(f"⚠️ MARKET FEED STALE • {health.message} • age: {health.age_seconds:.0f}s")
             else:
                 st.success(f"🟢 MARKET FEED HEALTHY • latest completed bar: {health.last_bar_timestamp}")
+
+        engine = st.session_state.get("event_engine")
+        if engine is not None:
+            st.caption(f"Event engine: ACTIVE • {len(engine.history)} event(s) this session")
 
         if st.session_state["paper_history"]:
             st.subheader("Paper Order Journal")
