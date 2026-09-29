@@ -141,7 +141,22 @@ class PaperTrader:
         save_order(order)
         return event
 
+    def process_event(self, event, confirmation="NOT USED"):
+        """Consume a shared SIGNAL event while retaining full bar data."""
+        row = event.payload.get("row", {})
+        if not row:
+            return None
+        signal = event.payload.get("signal", direction_signal(row))
+        score = float(event.payload.get("score", score_signal(row)[0]))
+        return self._process_bar_values(row, confirmation, signal, score)
+
     def process_bar(self, row, confirmation="NOT USED"):
+        """Backward-compatible direct bar entry point."""
+        signal = direction_signal(row)
+        score = score_signal(row)[0]
+        return self._process_bar_values(row, confirmation, signal, score)
+
+    def _process_bar_values(self, row, confirmation="NOT USED", signal=None, score=None):
         bar_timestamp = row.get("timestamp")
         bar_timestamp = (
             bar_timestamp.isoformat()
@@ -155,8 +170,10 @@ class PaperTrader:
             return None
 
         price = float(row["close"])
-        signal = direction_signal(row)
-        score, _ = score_signal(row)
+        if signal is None:
+            signal = direction_signal(row)
+        if score is None:
+            score = score_signal(row)[0]
 
         if self.position:
             exit_price = reason = None
