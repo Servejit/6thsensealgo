@@ -396,26 +396,29 @@ with tab3:
 
             trader = st.session_state["paper"]
             event_engine = st.session_state["event_engine"]
+            feed = st.session_state["paper_feed"]
+            pipeline = SignalEventPipeline(
+                symbol,
+                event_engine=event_engine,
+                feed=feed,
+            )
             new_events = []
-            for _, row in data5.iloc[-5:].iterrows():
-                event_engine.emit(
-                    EventType.BAR_CLOSED,
-                    row["timestamp"],
-                    symbol,
-                    {"row": row.to_dict()},
-                )
-                event = trader.process_bar(row, confirmation)
+            for bar in dataframe_to_bars(data5.iloc[-5:], symbol):
+                if not feed.publish(bar):
+                    continue
+                row = data5[data5["timestamp"] == bar.timestamp].iloc[-1]
+                signal_event = pipeline.process_bar(row)
+                event = trader.process_event(signal_event, confirmation)
                 if event:
-                    event_type = EventType.RISK_BLOCK if event.get("Action") == "BLOCKED" else EventType.ORDER_EVENT
-                    event_engine.emit(event_type, row["timestamp"], symbol, event)
-                    new_events.append(event)
-                else:
-                    event_engine.emit(
-                        EventType.SIGNAL,
-                        row["timestamp"],
-                        symbol,
-                        {"signal": direction_signal(row), "score": score_signal(row)[0]},
+                    event_type = (
+                        EventType.RISK_BLOCK
+                        if event.get("Action") == "BLOCKED"
+                        else EventType.ORDER_EVENT
                     )
+                    event_engine.emit(
+                        event_type, row["timestamp"], symbol, event
+                    )
+                    new_events.append(event)
 
             st.session_state["paper_history"].extend(new_events)
             st.session_state["paper_last"] = data5.iloc[-1]
