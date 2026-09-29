@@ -126,6 +126,16 @@ class TradesmartBroker(BrokerAdapter):
             return data[-1] if data else {}
         return data
 
+    def limits(self):
+        return self._post("Limits", {"uid": self.client_id, "actid": self.client_id})
+
+    def search_script(self, searchtext, exchange=None):
+        payload = {"uid": self.client_id, "stext": str(searchtext)}
+        if exchange:
+            payload["exch"] = exchange
+        data = self._post("SearchScrip", payload)
+        return data.get("values", []) if isinstance(data, dict) else []
+
     def get_positions(self):
         return self._post("PositionBook", {"uid": self.client_id})
 
