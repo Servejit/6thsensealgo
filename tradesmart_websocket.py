@@ -10,7 +10,7 @@ except ImportError:
 
 
 class TradesmartWebSocket:
-    """TradeSmart V2 streaming client for touchline, depth, order and position feeds."""
+    """TradeSmart V2 streaming client with reconnect and 30-second heartbeat."""
 
     URL = "wss://v2api.tradesmartonline.in/NorenWSAPI/"
 
@@ -35,10 +35,12 @@ class TradesmartWebSocket:
         self.reconnect_seconds = float(reconnect_seconds)
         self._ws = None
         self._thread = None
+        self._heartbeat_thread = None
         self._stop = threading.Event()
         self._subscriptions = []
         self._connected = False
         self._last_message_at = None
+        self._last_heartbeat_at = None
 
     @property
     def connected(self):
@@ -94,6 +96,14 @@ class TradesmartWebSocket:
         if self.on_close:
             self.on_close()
 
+    def _run_heartbeat(self):
+        while not self._stop.wait(30.0):
+            try:
+                self.heartbeat()
+            except Exception as exc:
+                if self.on_error:
+                    self.on_error(exc)
+
     def _run(self):
         while not self._stop.is_set():
             try:
@@ -104,10 +114,7 @@ class TradesmartWebSocket:
                     on_error=self._on_error,
                     on_close=self._on_close,
                 )
-                self._ws.run_forever(
-                    ping_interval=None,
-                    ping_timeout=None,
-                )
+                self._ws.run_forever(ping_interval=None, ping_timeout=None)
             except Exception as exc:
                 if self.on_error:
                     self.on_error(exc)
@@ -124,12 +131,18 @@ class TradesmartWebSocket:
                 return
             self._thread = threading.Thread(target=self._run, daemon=True)
             self._thread.start()
+            if not self._heartbeat_thread or not self._heartbeat_thread.is_alive():
+                self._heartbeat_thread = threading.Thread(
+                    target=self._run_heartbeat, daemon=True
+                )
+                self._heartbeat_thread.start()
         else:
             self._run()
 
     def heartbeat(self):
         if self._ws and self._connected:
             self._ws.send(json.dumps({"t": "h"}))
+            self._last_heartbeat_at = time.time()
 
     def stop(self):
         self._stop.set()
