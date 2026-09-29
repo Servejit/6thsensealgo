@@ -56,6 +56,8 @@ class Tradesmart5mFeed:
         symbol: str,
         stale_after_seconds: float = 180.0,
         on_bar: Optional[Callable[[MarketBar], None]] = None,
+        on_order_update: Optional[Callable[[dict], None]] = None,
+        on_position_update: Optional[Callable[[dict], None]] = None,
     ):
         self.exchange = exchange
         self.token = str(token)
@@ -79,6 +81,8 @@ class Tradesmart5mFeed:
         self._last_cumulative_volume = None
         self._last_price = None
         self._last_tick_at = None
+        self.on_order_update = on_order_update
+        self.on_position_update = on_position_update
         self.order_updates = []
         self.position_updates = []
 
@@ -183,10 +187,14 @@ class Tradesmart5mFeed:
             with self._lock:
                 self.order_updates.append(dict(data))
                 self.order_updates = self.order_updates[-100:]
+                if self.on_order_update:
+                    self.on_order_update(dict(data))
         elif task == "pm":
             with self._lock:
                 self.position_updates.append(dict(data))
                 self.position_updates = self.position_updates[-100:]
+                if self.on_position_update:
+                    self.on_position_update(dict(data))
 
     def snapshot(self):
         with self._lock:
