@@ -46,8 +46,23 @@ def init_db():
             last_bar_timestamp TEXT,
             updated_at TEXT NOT NULL
         )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS broker_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            positions_json TEXT NOT NULL,
+            orders_json TEXT NOT NULL,
+            captured_at TEXT NOT NULL
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS reconciliation_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            status TEXT NOT NULL,
+            action TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            details_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )""")
 
-        # Migrate databases created by earlier versions.
         cols = {r["name"] for r in con.execute("PRAGMA table_info(positions)").fetchall()}
         if "score" not in cols:
             con.execute("ALTER TABLE positions ADD COLUMN score REAL")
@@ -61,18 +76,24 @@ def save_order(order):
     with _connect() as con:
         con.execute(
             "INSERT OR REPLACE INTO orders VALUES (?,?,?,?,?,?,?,?)",
-            (
-                order.order_id,
-                order.symbol,
-                order.side,
-                order.quantity,
-                order.price,
-                order.status,
-                order.reason,
-                order.created_at,
-            ),
+            (order.order_id, order.symbol, order.side, order.quantity, order.price,
+             order.status, order.reason, order.created_at),
         )
         con.commit()
+
+
+def update_order_status(order_id, status, reason=None, filled_at=None):
+    init_db()
+    with _connect() as con:
+        row = con.execute("SELECT * FROM orders WHERE order_id=?", (order_id,)).fetchone()
+        if not row:
+            return False
+        con.execute(
+            "UPDATE orders SET status=?, reason=COALESCE(?, reason) WHERE order_id=?",
+            (status, reason, order_id),
+        )
+        con.commit()
+        return True
 
 
 def save_position(symbol, position):
@@ -83,17 +104,9 @@ def save_position(symbol, position):
                 """INSERT OR REPLACE INTO positions
                    (symbol,side,quantity,entry,stop_loss,target,opened_at,score,confirmation)
                    VALUES (?,?,?,?,?,?,?,?,?)""",
-                (
-                    symbol,
-                    position["side"],
-                    position["qty"],
-                    position["entry"],
-                    position["sl"],
-                    position["target"],
-                    str(position.get("time", "")),
-                    float(position.get("score", 0.0)),
-                    str(position.get("confirmation", "NOT USED")),
-                ),
+                (symbol, position["side"], position["qty"], position["entry"],
+                 position["sl"], position["target"], str(position.get("time", "")),
+                 float(position.get("score", 0.0)), str(position.get("confirmation", "NOT USED"))),
             )
         else:
             con.execute("DELETE FROM positions WHERE symbol=?", (symbol,))
@@ -103,20 +116,14 @@ def save_position(symbol, position):
 def load_position(symbol):
     init_db()
     with _connect() as con:
-        row = con.execute(
-            "SELECT * FROM positions WHERE symbol=?", (symbol,)
-        ).fetchone()
+        row = con.execute("SELECT * FROM positions WHERE symbol=?", (symbol,)).fetchone()
         if not row:
             return None
         data = dict(row)
         return {
-            "side": data["side"],
-            "qty": int(data["quantity"]),
-            "entry": float(data["entry"]),
-            "sl": float(data["stop_loss"]),
-            "target": float(data["target"]),
-            "time": data.get("opened_at", ""),
-            "score": float(data.get("score") or 0.0),
+            "side": data["side"], "qty": int(data["quantity"]), "entry": float(data["entry"]),
+            "sl": float(data["stop_loss"]), "target": float(data["target"]),
+            "time": data.get("opened_at", ""), "score": float(data.get("score") or 0.0),
             "confirmation": data.get("confirmation") or "NOT USED",
         }
 
@@ -127,13 +134,10 @@ def load_orders(symbol=None, limit=200):
         if symbol:
             rows = con.execute(
                 "SELECT * FROM orders WHERE symbol=? ORDER BY created_at DESC LIMIT ?",
-                (symbol, limit),
-            ).fetchall()
+                (symbol, limit)).fetchall()
         else:
             rows = con.execute(
-                "SELECT * FROM orders ORDER BY created_at DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+                "SELECT * FROM orders ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -145,18 +149,10 @@ def save_session(symbol, state):
                (symbol,session_date,starting_equity,cash,realized_pnl,trade_count,
                 emergency_stop,previous_signal,last_bar_timestamp,updated_at)
                VALUES (?,?,?,?,?,?,?,?,?,?)""",
-            (
-                symbol,
-                state["session_date"],
-                float(state["starting_equity"]),
-                float(state["cash"]),
-                float(state["realized_pnl"]),
-                int(state["trade_count"]),
-                1 if state["emergency_stop"] else 0,
-                state.get("previous_signal", "NONE"),
-                state.get("last_bar_timestamp"),
-                state["updated_at"],
-            ),
+            (symbol, state["session_date"], float(state["starting_equity"]), float(state["cash"]),
+             float(state["realized_pnl"]), int(state["trade_count"]),
+             1 if state["emergency_stop"] else 0, state.get("previous_signal", "NONE"),
+             state.get("last_bar_timestamp"), state["updated_at"]),
         )
         con.commit()
 
@@ -164,9 +160,7 @@ def save_session(symbol, state):
 def load_session(symbol):
     init_db()
     with _connect() as con:
-        row = con.execute(
-            "SELECT * FROM paper_sessions WHERE symbol=?", (symbol,)
-        ).fetchone()
+        row = con.execute("SELECT * FROM paper_sessions WHERE symbol=?", (symbol,)).fetchone()
         return dict(row) if row else None
 
 
@@ -177,9 +171,41 @@ def delete_session(symbol):
         con.commit()
 
 
+def save_broker_snapshot(symbol, positions, orders, captured_at):
+    init_db()
+    with _connect() as con:
+        con.execute(
+            "INSERT INTO broker_snapshots(symbol,positions_json,orders_json,captured_at) VALUES (?,?,?,?)",
+            (symbol, json.dumps(positions, default=str), json.dumps(orders, default=str), captured_at),
+        )
+        con.commit()
+
+
+def save_reconciliation(symbol, result, action, created_at):
+    init_db()
+    with _connect() as con:
+        con.execute(
+            """INSERT INTO reconciliation_audit(symbol,status,action,reason,details_json,created_at)
+               VALUES (?,?,?,?,?,?)""",
+            (symbol, result.status, action, result.reason,
+             json.dumps({
+                 "local_position": result.local_position,
+                 "broker_position": result.broker_position,
+                 "order_mismatches": result.order_mismatches,
+             }, default=str), created_at),
+        )
+        con.commit()
+
+
+def load_last_reconciliation(symbol):
+    init_db()
+    with _connect() as con:
+        row = con.execute(
+            "SELECT * FROM reconciliation_audit WHERE symbol=? ORDER BY id DESC LIMIT 1",
+            (symbol,)).fetchone()
+        return dict(row) if row else None
+
+
 def state_summary(symbol):
-    return {
-        "session": load_session(symbol),
-        "position": load_position(symbol),
-        "orders": load_orders(symbol, 50),
-    }
+    return {"session": load_session(symbol), "position": load_position(symbol),
+            "orders": load_orders(symbol, 50), "reconciliation": load_last_reconciliation(symbol)}
