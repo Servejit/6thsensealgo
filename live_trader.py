@@ -74,6 +74,8 @@ class LiveTrader:
             token=token,
             symbol=symbol,
             on_bar=self._on_bar,
+            on_order_update=self._on_order_update,
+            on_position_update=self._on_position_update,
         )
 
         self.lock = threading.RLock()
@@ -92,6 +94,7 @@ class LiveTrader:
             columns=["timestamp", "open", "high", "low", "close", "volume"]
         )
         self._warmup_complete = False
+        self._pending_orders = {}
 
     def warmup(self, lookback_days=5):
         df5 = self.broker.historical_candles(
@@ -217,10 +220,8 @@ class LiveTrader:
         with self.lock:
             if self.running:
                 return
-            self.guard.assert_live_allowed(
-                reconciliation_ok=False,
-                risk_ok=False,
-            )
+            if not self.guard.live_ready():
+                raise RuntimeError("LIVE START BLOCKED: " + ", ".join(self.guard.reasons()))
             self.warmup()
             result = self.reconcile_now()
             if not result.safe_for_new_orders:
@@ -258,6 +259,7 @@ class LiveTrader:
             reason=reason,
         )
         order = self.router.submit(
+        self._pending_orders[order.order_id] = {"kind": "ENTRY", "side": side, "qty": qty, "price": price, "reason": reason}
             request,
             reconciliation=result,
             risk_ok=True,
@@ -287,6 +289,7 @@ class LiveTrader:
             reason=reason,
         )
         order = self.router.submit(
+        self._pending_orders[order.order_id] = {"kind": "EXIT", "side": side, "qty": qty, "price": price, "reason": reason}
             request,
             reconciliation=result,
             risk_ok=True,
@@ -302,6 +305,52 @@ class LiveTrader:
         })
         self.last_action = f"EXIT ORDER SUBMITTED: {order.order_id}"
         return order
+
+    def _on_order_update(self, data):
+        status = str(data.get("status", "")).upper()
+        order_id = str(data.get("norenordno", ""))
+        if not order_id:
+            return
+        with self.lock:
+            pending = self._pending_orders.get(order_id)
+            if pending is None:
+                return
+            if status in {"REJECTED", "CANCELED", "CANCELLED"}:
+                self.last_action = f"ORDER {status}: {order_id}"
+                self._pending_orders.pop(order_id, None)
+                return
+            if status != "COMPLETE":
+                return
+            avg = float(data.get("avgprc", pending["price"]) or pending["price"])
+            if pending["kind"] == "ENTRY":
+                entry = avg
+                if pending["side"] == "BUY":
+                    sl = entry * (1 - self.sl_pct / 100)
+                    target = entry * (1 + self.target_pct / 100)
+                else:
+                    sl = entry * (1 + self.sl_pct / 100)
+                    target = entry * (1 - self.target_pct / 100)
+                position = {
+                    "side": pending["side"],
+                    "qty": pending["qty"],
+                    "entry": entry,
+                    "sl": sl,
+                    "target": target,
+                    "time": datetime.now(timezone.utc).isoformat(),
+                    "score": self.last_score,
+                    "confirmation": self.last_confirmation,
+                }
+                self.position = position
+                save_position(self.symbol, position)
+                self.last_action = f"ENTRY FILLED: {order_id}"
+            else:
+                self.position = None
+                save_position(self.symbol, None)
+                self.last_action = f"EXIT FILLED: {order_id}"
+            self._pending_orders.pop(order_id, None)
+
+    def _on_position_update(self, data):
+        return None
 
     def _on_bar(self, bar):
         with self.lock:
