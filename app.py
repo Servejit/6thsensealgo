@@ -5,6 +5,9 @@ from strategy_engine import add_indicators, direction_signal, score_signal
 from market_data import fetch_5m, make_15m, latest_confirmation
 from risk_engine import RiskEngine
 from paper_trader import PaperTrader
+from event_engine import EventEngine, EventType
+from market_feed import MarketDataFeed, dataframe_to_bars
+from replay_feed import ReplayFeed
 from reconciliation import reconcile, reconciliation_action
 from state_store import save_reconciliation, load_last_reconciliation, load_position, load_orders
 
@@ -256,6 +259,9 @@ with tab1:
             d.metric("Score", f"{score:.0f}/100")
 
             if st.button("▶ Run 6thSense Backtest", type="primary"):
+                replay = ReplayFeed(symbol if symbol else "CSV")
+                replay_count = replay.replay(data, reset=True)
+                st.session_state["replay_count"] = replay_count
                 st.session_state["result"] = backtest(
                     data,
                     capital,
@@ -267,6 +273,10 @@ with tab1:
                 )
 
             if "result" in st.session_state:
+                if "replay_count" in st.session_state:
+                    st.caption(
+                        f"Replay feed processed {st.session_state['replay_count']:,} completed bars."
+                    )
                 trades, equity, final_capital, pnl, win_rate, max_dd = st.session_state[
                     "result"
                 ]
@@ -326,6 +336,10 @@ with tab3:
             max_trades,
         )
         st.session_state["event_engine"] = EventEngine()
+        st.session_state["paper_feed"] = MarketDataFeed(
+            symbol, stale_after_seconds=180
+        )
+        st.session_state["paper_feed"].connect()
         st.session_state["paper"] = PaperTrader(
             symbol, capital, risk, sl_pct, target_pct,
             feed=st.session_state["paper_feed"],
