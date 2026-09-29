@@ -5,6 +5,8 @@ from strategy_engine import add_indicators, direction_signal, score_signal
 from market_data import fetch_5m, make_15m, latest_confirmation
 from risk_engine import RiskEngine
 from paper_trader import PaperTrader
+from reconciliation import reconcile, reconciliation_action
+from state_store import save_reconciliation, load_last_reconciliation, load_position, load_orders
 
 try:
     from streamlit_autorefresh import st_autorefresh
@@ -449,6 +451,49 @@ with tab4:
     st.write("Signal-start protection: ACTIVE")
     st.write("Persistent risk/session state: ACTIVE")
     st.write("Emergency stop persistence: ACTIVE")
+    st.subheader("🔎 Reconciliation")
+    st.caption(
+        "Broker-neutral reconciliation compares persisted local state with the "
+        "available adapter snapshot. Any discrepancy blocks new orders; it never "
+        "auto-corrects positions or sends orders."
+    )
+
+    if st.button("🔍 Run Reconciliation"):
+        try:
+            trader = st.session_state.get("paper")
+            if trader is not None:
+                local_position = trader.position
+                local_orders = load_orders(symbol, 200)
+                broker_positions = trader.broker.positions()
+                broker_position = broker_positions[0] if broker_positions else None
+                broker_orders = trader.broker.broker_orders(symbol)
+            else:
+                local_position = load_position(symbol)
+                local_orders = load_orders(symbol, 200)
+                broker_position = None
+                broker_orders = []
+
+            result = reconcile(local_position, broker_position, local_orders, broker_orders)
+            action = reconciliation_action(result)
+            now = pd.Timestamp.utcnow().isoformat()
+            save_reconciliation(symbol, result, action, now)
+            st.session_state["reconciliation_result"] = result
+
+            if result.safe_for_new_orders:
+                st.success("RECONCILIATION: MATCHED")
+            else:
+                st.error(f"RECONCILIATION: {result.status} • {result.reason}")
+        except Exception as e:
+            st.error(f"Reconciliation error: {e}")
+
+    last_recon = load_last_reconciliation(symbol)
+    if last_recon:
+        st.write(f"Last reconciliation: **{last_recon['status']}** • {last_recon['created_at']}")
+        st.write(f"Action: **{last_recon['action']}**")
+        st.write(f"Reason: {last_recon['reason']}")
+    else:
+        st.info("No reconciliation audit exists yet for this symbol.")
+
     st.error(
         "Real-money execution is intentionally disabled. Broker authentication, "
         "order routing, reconciliation and exchange/broker safeguards must be "
